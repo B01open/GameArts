@@ -1,0 +1,95 @@
+
+#pragma once
+#include "Common.h"
+#include <libconsensus/pbft/PartiallyPBFTReqCache.h>
+
+#define RPBFTReqCache_LOG(LEVEL) LOG(LEVEL) << LOG_BADGE("CONSENSUS") << LOG_BADGE("RPBFTReqCache")
+
+namespace dev
+{
+namespace consensus
+{
+class RPBFTReqCache : public PartiallyPBFTReqCache
+{
+public:
+    using Ptr = std::shared_ptr<RPBFTReqCache>;
+    RPBFTReqCache() : PartiallyPBFTReqCache()
+    {
+        m_requestedPrepareQueue = std::make_shared<QueueSet<dev::h256>>();
+        m_nodeIDToPrepareStatus = std::make_shared<std::map<dev::h512, PBFTMsg::Ptr>>();
+        m_prepareHashToNodeID =
+            std::make_shared<std::map<dev::h256, std::shared_ptr<std::set<dev::h512>>>>();
+    }
+
+    ~RPBFTReqCache() override {}
+
+    // check the _rawPrepareStatus received from the given _peerNodeId is valid or not
+    virtual bool checkReceivedRawPrepareStatus(PBFTMsg::Ptr _rawPrepareStatus,
+        VIEWTYPE const& _currentView, int64_t const& _currentNumber);
+
+    // check the given rawPrepare request message has been sent or not
+    virtual bool checkAndRequestRawPrepare(PBFTMsg::Ptr _pbftMsg);
+
+    // response rawPrepareCache when receive the rawPrepare request
+    virtual void responseRawPrepare(
+        std::shared_ptr<dev::bytes> _encodedRawPrepare, PBFTMsg::Ptr _rawPrepareRequestMsg);
+
+    // hook to send rawPrepareStatus randomly after addRawPrepare into the cache
+    void setRandomSendRawPrepareStatusCallback(std::function<void(PBFTMsg::Ptr)> const& _callback)
+    {
+        m_randomSendRawPrepareStatusCallback = _callback;
+    }
+
+    // cache the block hash of requested-raw-prepare
+    virtual void insertRequestedRawPrepare(dev::h256 const& _hash);
+    // check the given raw-prepare-request has been sent or not
+    bool isRequestedPrepare(dev::h256 const& _hash);
+
+    void setMaxRequestedPrepareQueueSize(size_t const& _maxRequestedPrepareQueueSize)
+    {
+        m_maxRequestedPrepareQueueSize = _maxRequestedPrepareQueueSize;
+    }
+
+    std::shared_ptr<QueueSet<dev::h256>> requestedPrepareQueue() { return m_requestedPrepareQueue; }
+
+    void updateRawPrepareStatusCache(
+        dev::h512 const& _nodeId, PBFTMsg::Ptr _receivedRawPrepareStatus);
+
+    dev::h512 selectNodeToRequestTxs(
+        dev::h512 const& _expectedNodeID, PBFTMsg::Ptr _receivedRawPrepareStatus);
+    void setMaxRequestMissedTxsWaitTime(uint64_t const& _maxRequestMissedTxsWaitTime)
+    {
+        m_maxRequestMissedTxsWaitTime = _maxRequestMissedTxsWaitTime;
+    }
+
+private:
+    bool findTheRequestedRawPrepare(PBFTMsg::Ptr _rawPrepareRequestMsg);
+    // compare _cachedRawPrepareStatus and _receivedRawPrepareStatus
+    // return true only when the _cachedRawPrepareStatus is older than _receivedRawPrepareStatus
+    bool checkRawPrepareStatus(
+        PBFTMsg::Ptr _cachedRawPrepareStatus, PBFTMsg::Ptr _receivedRawPrepareStatus);
+
+    dev::h512 selectRequiredNodeToRequestTxs(
+        dev::h512 const& _expectedNodeID, PBFTMsg::Ptr _receivedRawPrepareStatus);
+
+private:
+    // record the requested rawPrepareReq
+    std::shared_ptr<QueueSet<dev::h256>> m_requestedPrepareQueue;
+    size_t m_maxRequestedPrepareQueueSize = 1024;
+    mutable SharedMutex x_requestedPrepareQueue;
+
+    // signal when update the rawPrepareStatus
+    boost::condition_variable m_signalled;
+    boost::mutex x_signalled;
+
+    // maps between nodeID and prepare status
+    std::shared_ptr<std::map<dev::h512, PBFTMsg::Ptr>> m_nodeIDToPrepareStatus;
+    // maps between block hash and nodeID set
+    std::shared_ptr<std::map<dev::h256, std::shared_ptr<std::set<dev::h512>>>>
+        m_prepareHashToNodeID;
+    mutable SharedMutex x_nodeIDToPrepareStatus;
+
+    uint64_t m_maxRequestMissedTxsWaitTime = 100;
+};
+}  // namespace consensus
+}  // namespace dev
